@@ -7,108 +7,283 @@ import android.os.Bundle
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.ImageLoader
+import coil.compose.AsyncImage
+import coil.decode.GifDecoder
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
+
+// Represents one ISL sign (GIF or letter image)
+data class SignItem(val assetPath: String)
 
 class MainActivity : ComponentActivity() {
 
-    // This variable stores the latest recognized speech text
-    companion object {
-        var recognizedText: String = ""
-    }
+    private var onSpeechResult: ((String) -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // This sets the UI content of the app using Jetpack Compose
-        setContent {
-            SpeechToTextUI()
-        }
+        setContent { ISLApp() }
     }
 
-    // This function launches Android's built-in speech recognition system
-    private fun startSpeechRecognition(context: Context) {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+    // ---------------- SPEECH ----------------
 
-        // Use free-form speech input
-        intent.putExtra(
-            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-        )
+    private fun startSpeechRecognition(
+        context: Context,
+        onResult: (String) -> Unit
+    ) {
+        onSpeechResult = onResult
 
-        // Use device default language
-        intent.putExtra(
-            RecognizerIntent.EXTRA_LANGUAGE,
-            Locale.getDefault()
-        )
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE,
+                Locale("en", "IN")
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_PROMPT,
+                "Speak now"
+            )
+        }
 
-        // Prompt shown to user
-        intent.putExtra(
-            RecognizerIntent.EXTRA_PROMPT,
-            "Speak now"
-        )
-
-        // Start speech recognizer
         (context as Activity).startActivityForResult(intent, 1)
     }
 
-    // This method receives the recognized speech result
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == 1 && resultCode == RESULT_OK) {
-            val result =
-                data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val text = data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?: ""
 
-            // Store the most confident recognized text
-            recognizedText = result?.get(0) ?: ""
+            onSpeechResult?.invoke(text)
         }
     }
 
-    // UI function that displays button and recognized text
+    // ---------------- UI ----------------
+
     @Composable
-    fun SpeechToTextUI() {
+    fun ISLApp() {
 
         val context = LocalContext.current
 
-        // This state variable updates UI when recognizedText changes
-        var displayText by remember { mutableStateOf("Press Speak and talk") }
+        var recognizedText by remember { mutableStateOf("") }
+        var signSequence by remember { mutableStateOf<List<SignItem>>(emptyList()) }
+        var currentIndex by remember { mutableStateOf(0) }
 
-        // Update UI whenever speech result changes
-        LaunchedEffect(recognizedText) {
-            if (recognizedText.isNotEmpty()) {
-                displayText = recognizedText
+        // Coroutine scope + playback job (CRASH FIX)
+        val scope = rememberCoroutineScope()
+        var playbackJob by remember { mutableStateOf<Job?>(null) }
+
+        // GIF-capable ImageLoader
+        val gifImageLoader = remember {
+            ImageLoader.Builder(context)
+                .components {
+                    add(GifDecoder.Factory())
+                }
+                .build()
+        }
+
+        // Safe playback function
+        fun startPlayback(sequence: List<SignItem>) {
+
+            playbackJob?.cancel() // stop old playback safely
+
+            playbackJob = scope.launch {
+
+                if (sequence.isEmpty()) return@launch
+
+                for (i in sequence.indices) {
+
+                    currentIndex = i
+
+                    val path = sequence[i].assetPath
+
+                    if (path.endsWith(".gif")) {
+                        delay(2500) // allow full GIF playback
+                    } else {
+                        delay(800) // letters
+                    }
+                }
             }
         }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFFF5F7FA),
+                            Color(0xFFE4ECF7)
+                        )
+                    )
+                )
+                .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
-            Button(onClick = {
-                startSpeechRecognition(context)
-            }) {
-                Text(text = "Speak")
+            Text(
+                text = "Speech to Indian Sign Language",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1F2937)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ISL DISPLAY AREA
+            Box(
+                modifier = Modifier
+                    .size(320.dp)
+                    .background(
+                        color = Color(0xFFEAF2FF),
+                        shape = RoundedCornerShape(20.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+
+                if (signSequence.isNotEmpty()) {
+
+                    AsyncImage(
+                        model = "file:///android_asset/${signSequence[currentIndex].assetPath}",
+                        imageLoader = gifImageLoader,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp)
+                    )
+
+                } else {
+
+                    Text(
+                        text = "ISL Output",
+                        fontSize = 16.sp,
+                        color = Color.Gray
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(30.dp))
 
-            Text(
-                text = displayText,
-                fontSize = 22.sp
-            )
+            FloatingActionButton(
+                containerColor = Color(0xFF6366F1),
+                onClick = {
+
+                    startSpeechRecognition(context) { text ->
+
+                        recognizedText = text
+
+                        val newSequence = convertTextToISL(text)
+
+                        signSequence = newSequence
+
+                        startPlayback(newSequence) // SAFE playback start
+                    }
+                }
+            ) {
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = "Speak",
+                    tint = Color.White
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFDCEAFE)
+                ),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(6.dp)
+            ) {
+
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+
+                    Text(
+                        text = "Recognized Speech",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF1E40AF)
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        text = if (recognizedText.isBlank()) "—" else recognizedText,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.Black
+                    )
+                }
+            }
         }
+    }
+
+    // ---------------- ISL LOGIC ----------------
+
+    private fun convertTextToISL(text: String): List<SignItem> {
+
+        val islWordMap = mapOf(
+            "hello" to "gifs/hello.gif",
+            "good" to "gifs/good.gif",
+            "morning" to "gifs/morning.gif",
+            "you" to "gifs/you.gif",
+        )
+
+        val cleanedWords = text
+            .lowercase()
+            .replace(Regex("[^a-z ]"), "")
+            .split(" ")
+            .filter { it.isNotBlank() }
+
+        val signs = mutableListOf<SignItem>()
+
+        for (word in cleanedWords) {
+
+            if (islWordMap.containsKey(word)) {
+
+                signs.add(SignItem(islWordMap[word]!!))
+
+            } else {
+
+                for (ch in word) {
+
+                    signs.add(SignItem("letters/${ch}.png"))
+                }
+            }
+        }
+
+        return signs
     }
 }
