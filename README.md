@@ -30,32 +30,54 @@ A modern Android application designed to bridge the communication gap between sp
 
 ## ⚙️ Setup & Installation
 
-1. **Clone the repository**:
-   ```bash
-   git clone [repository-url]
-   ```
-2. **Open in Android Studio**:
-   Use Android Studio Hedgehog (or later) for full Compose support.
-3. **Configure Firebase**:
-   - Add your `google-services.json` to the `app/` directory.
-   - Enable Authentication in your Firebase Console.
-4. **Build and Run**:
-   Click "Run app" or use Gradle:
-   ```bash
-   ./gradlew installDebug
-   ```
+Follow these steps to get the development environment ready:
+
+### 1. Prerequisites
+- **Android Studio Hedgehog (2023.1.1)** or newer.
+- **JDK 17** (standard for modern Android projects).
+- An Android device or emulator with **Google Play Services** (required for Speech Recognition).
+
+### 2. Clone the Repository
+```bash
+git clone https://github.com/aarizkhan2407/Speech_Sign_Language_Project.git
+cd Speech_Sign_Language_Project
+```
+
+### 3. Firebase Configuration
+This project requires Firebase for authentication:
+1. Go to the [Firebase Console](https://console.firebase.google.com/).
+2. Create a new project (e.g., "Signs and Speech").
+3. Add an Android App to the project:
+   - Package name: `com.example.speech_sign_language_project`
+4. Download the `google-services.json` file.
+5. Place the file in the `app/` directory of this project.
+6. Enable **Email/Password** authentication in the Firebase Authentication settings.
+
+### 4. Asset Requirements
+The Sign Language translation engine (`ISLTranslator.kt`) expects sign language visual assets.
+- Ensure your assets are located in the `app/src/main/res/drawable/` directory or configured in the translator logic.
+- The default implementation maps common words to drawable resource IDs (e.g., `sign_hello`, `sign_thank_you`).
+
+### 5. Build and Run
+You can build the project using the Gradle wrapper:
+```bash
+# Build the debug APK
+./gradlew assembleDebug
+
+# Install and run on your connected device
+./gradlew installDebug
+```
 
 ## 📝 Usage
 
-1. Open the app and log in or create an account.
-2. Tap the blue wide Microphone button to start listening.
-3. Speak clearly; the app will convert your speech to text and then show the corresponding Sign Language images in real-time.
-4. Tap the red button to stop listening.
+1. **Launch the App**: Open "Signs & Speech" on your device.
+2. **Authentication**: Sign up for a new account or log in with existing credentials.
+3. **Listen**: Press the large Blue Microphone button. The visualizer will show high-frequency activity as you speak.
+4. **Visual Translate**: Recognized words will appear on screen, and if a corresponding sign exists in the library, it will be displayed automatically.
+5. **Stop**: Press the Red Stop button to end the session.
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
-
-*Developed with ❤️ as part of the Advanced Agentic Coding effort.*
