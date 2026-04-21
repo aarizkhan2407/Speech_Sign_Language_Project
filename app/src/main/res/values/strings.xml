@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Speech_Sign_Language_Project</string>
-    <string name="default_web_client_id">YOUR_ID.apps.googleusercontent.com</string>
+    <string name="default_web_client_id">616609703534-nhi3877nal9rri1nkfqt2rcu931l3tpm.apps.googleusercontent.com</string>
+    <string name="translate_api_key">AIzaSyAyar9tQPfKsw2bsuDqswJdTRGVITDP4o4</string>
 </resources>
