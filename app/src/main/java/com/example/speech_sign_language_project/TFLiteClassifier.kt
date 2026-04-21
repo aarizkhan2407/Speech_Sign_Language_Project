@@ -17,6 +17,7 @@ object TFLiteClassifier {
     private var imgSize: Int = 96
 
     fun init(context: Context) {
+        if (interpreter != null) return
         Log.e("TFLite", "=== INIT CALLED ===")
         try {
             Log.e("TFLite", "Step 1: listing assets...")

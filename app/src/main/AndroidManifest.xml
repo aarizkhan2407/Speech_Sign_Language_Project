@@ -18,15 +18,10 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
-        <!-- LOGIN SCREEN (APP STARTS HERE) -->
+        <!-- LOGIN SCREEN -->
         <activity
             android:name=".LoginActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="true" />
 
         <!-- SIGNUP SCREEN -->
         <activity
@@ -36,9 +31,14 @@
         <!-- MAIN TRANSLATOR SCREEN (Speech → Sign) -->
         <activity
             android:name=".MainActivity"
-            android:exported="false"
+            android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/AppTheme" />
+            android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <!-- SIGN → SPEECH SCREEN -->
         <activity

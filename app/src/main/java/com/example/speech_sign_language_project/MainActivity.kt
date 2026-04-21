@@ -1,315 +1,283 @@
 package com.example.speech_sign_language_project
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import coil.ImageLoader
-import coil.compose.AsyncImage
 import coil.decode.GifDecoder
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-
-import okhttp3.*
-import org.json.JSONObject
-
-data class SignItem(val assetPath: String)
+import coil.decode.ImageDecoderDecoder
+import com.example.speech_sign_language_project.ui.theme.Speech_Sign_Language_ProjectTheme
+import com.google.firebase.auth.FirebaseAuth
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
 
-    private var onSpeechResult: ((String) -> Unit)? = null
+    private val viewModel: MainViewModel by viewModels()
+    private lateinit var speechRecognizer: SpeechRecognizer
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { ISLApp() }
-    }
 
-    // ---------------- GOOGLE TRANSLATE API ----------------
-
-    private fun translateToEnglishAPI(
-        text: String,
-        onTranslated: (String) -> Unit
-    ) {
-        val apiKey = "AIzaSyAyar9tQPfKsw2bsuDqswJdTRGVITDP4o4"
-
-        val client = OkHttpClient()
-
-        val requestBody = FormBody.Builder()
-            .add("q", text)
-            .add("source", "hi")
-            .add("target", "en")
-            .build()
-
-        val request = Request.Builder()
-            .url("https://translation.googleapis.com/language/translate/v2?key=$apiKey")
-            .post(requestBody)
-            .build()
-
-        Thread {
-            try {
-                val response = client.newCall(request).execute()
-                val json = response.body?.string()
-
-                val translatedText = JSONObject(json)
-                    .getJSONObject("data")
-                    .getJSONArray("translations")
-                    .getJSONObject(0)
-                    .getString("translatedText")
-
-                runOnUiThread {
-                    onTranslated(translatedText)
-                }
-
-            } catch (e: Exception) {
-                runOnUiThread {
-                    onTranslated(text)
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                viewModel.listeningStatus = "Listening..."
+            }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {
+                // Throttle updates to improve performance
+                if (kotlin.math.abs(rmsdB - viewModel.audioVolume) > 1.0f) {
+                    viewModel.audioVolume = rmsdB
                 }
             }
-        }.start()
-    }
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {
+                // We keep isListening true until onResults or manual cancel
+            }
+            override fun onError(error: Int) {
+                viewModel.isListening = false
+                viewModel.audioVolume = 0f
+                viewModel.listeningStatus = when (error) {
+                    SpeechRecognizer.ERROR_NETWORK -> "Network Error"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No match found"
+                    else -> "Restarting..."
+                }
+                // Auto-restart if we want persistent listening, 
+                // but for now let's just allow manual retry
+            }
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    val text = matches[0]
+                    viewModel.listeningStatus = ""
+                    viewModel.isListening = false
+                    viewModel.audioVolume = 0f
+                    viewModel.translateAndPlay(this@MainActivity, text)
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {
+                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    viewModel.listeningStatus = matches[0]
+                }
+            }
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
 
-    // ---------------- SPEECH ----------------
+        val gifImageLoader = ImageLoader.Builder(this)
+            .components {
+                if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    add(ImageDecoderDecoder.Factory())
+                } else {
+                    add(GifDecoder.Factory())
+                }
+            }
+            .build()
 
-    private fun startSpeechRecognition(
-        context: Context,
-        language: String,
-        onResult: (String) -> Unit
-    ) {
-        onSpeechResult = onResult
-
-        val langCode = if (language == "hi") "hi-IN" else "en-IN"
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, langCode)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now")
+        setContent {
+            Speech_Sign_Language_ProjectTheme {
+                PhoneScreen(viewModel, gifImageLoader)
+            }
         }
-
-        (context as Activity).startActivityForResult(intent, 1)
     }
-
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?
-    ) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == 1 && resultCode == RESULT_OK) {
-            val text = data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-                ?: ""
-
-            onSpeechResult?.invoke(text)
-        }
-    }
-
-    // ---------------- DEVANAGARI CHECK ----------------
-
-    private fun isDevanagari(text: String): Boolean {
-        return text.any { it in '\u0900'..'\u097F' }
-    }
-
-    // ---------------- UI ----------------
 
     @Composable
-    fun ISLApp() {
-
+    fun PhoneScreen(viewModel: MainViewModel, gifImageLoader: ImageLoader) {
+        val configuration = LocalConfiguration.current
+        val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val context = LocalContext.current
+        var textInput by remember { mutableStateOf("") }
 
-        var recognizedText by remember { mutableStateOf("") }
-        var selectedLanguage by remember { mutableStateOf("en") }
-        var signSequence by remember { mutableStateOf<List<SignItem>>(emptyList()) }
-        var currentIndex by remember { mutableStateOf(0) }
-
-        val scope = rememberCoroutineScope()
-        var playbackJob by remember { mutableStateOf<Job?>(null) }
-
-        val gifImageLoader = remember {
-            ImageLoader.Builder(context)
-                .components { add(GifDecoder.Factory()) }
-                .build()
-        }
-
-        fun startPlayback(sequence: List<SignItem>) {
-            playbackJob?.cancel()
-
-            playbackJob = scope.launch {
-                for (i in sequence.indices) {
-                    currentIndex = i
-                    val path = sequence[i].assetPath
-                    delay(if (path.endsWith(".gif")) 2500 else 800)
-                }
-            }
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color(0xFFF5F7FA), Color(0xFFE4ECF7))
-                    )
-                )
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-
-            Text("Speech to ISL", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // ── NEW: Navigate to Sign → Speech screen ──────────────────────
-            Button(
-                onClick = {
-                    context.startActivity(Intent(context, SignToSpeechActivity::class.java))
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+        BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Color(0xFFF8FAFC)).padding(16.dp)) {
+            val constraints = this
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("📷  Sign Language → Speech", fontSize = 15.sp, color = Color.White)
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Divider(color = Color(0xFFCBD5E1))
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // LANGUAGE TOGGLE
-            Row {
-                Button(
-                    onClick = { selectedLanguage = "en" },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selectedLanguage == "en") Color(0xFF6366F1) else Color.LightGray
+                // Top header
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { /* Info action */ }) {
+                        Icon(Icons.Default.Info, contentDescription = "Info", tint = Color(0xFF64748B))
+                    }
+                    Text(
+                        "ISL Translator",
+                        fontSize = if (constraints.maxWidth < 600.dp) 24.sp else 30.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF0F172A)
                     )
-                ) { Text("English") }
-
-                Spacer(modifier = Modifier.width(10.dp))
-
-                Button(
-                    onClick = { selectedLanguage = "hi" },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selectedLanguage == "hi") Color(0xFF6366F1) else Color.LightGray
-                    )
-                ) { Text("Hindi") }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Box(
-                modifier = Modifier
-                    .size(300.dp)
-                    .background(Color(0xFFEAF2FF), RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (signSequence.isNotEmpty()) {
-                    AsyncImage(
-                        model = "file:///android_asset/${signSequence[currentIndex].assetPath}",
-                        imageLoader = gifImageLoader,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Text("ISL Output")
+                    IconButton(onClick = { 
+                        /* Auth logic commented out as requested */
+                    }) {
+                        Icon(Icons.Default.ExitToApp, contentDescription = "Logout", tint = Color(0xFF64748B))
+                    }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(30.dp))
+                // Switch Mode Button
+                ModeButton(context)
+                Spacer(modifier = Modifier.height(16.dp))
 
-            FloatingActionButton(
-                onClick = {
-                    startSpeechRecognition(context, selectedLanguage) { text ->
-
-                        recognizedText = text
-
-                        if (selectedLanguage == "hi") {
-
-                            if (!isDevanagari(text)) {
-                                Toast.makeText(context, "Please speak in Hindi", Toast.LENGTH_SHORT).show()
-                                return@startSpeechRecognition
-                            }
-
-                            translateToEnglishAPI(text) { translated ->
-
-                                val sequence = convertTextToISL(translated)
-                                signSequence = sequence
-                                startPlayback(sequence)
-                            }
-
+                // Input Section (Spoken text or manual entry)
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        if (viewModel.isListening) {
+                            ListeningCard(viewModel.listeningStatus.ifEmpty { "Listening..." })
                         } else {
-
-                            val sequence = convertTextToISL(text)
-                            signSequence = sequence
-                            startPlayback(sequence)
+                            OutlinedTextField(
+                                value = textInput,
+                                onValueChange = { textInput = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                placeholder = { Text("Type something to translate...", fontSize = 14.sp) },
+                                trailingIcon = {
+                                    if (textInput.isNotEmpty()) {
+                                        IconButton(onClick = { 
+                                            viewModel.translateAndPlay(context, textInput)
+                                            textInput = ""
+                                        }) {
+                                            Icon(Icons.Default.Send, contentDescription = "Translate", tint = Color(0xFF3B82F6))
+                                        }
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF3B82F6),
+                                    unfocusedBorderColor = Color(0xFFE2E8F0)
+                                )
+                            )
+                        }
+                        
+                        if (viewModel.recognizedText.isNotEmpty() && !viewModel.isListening) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            RecognizedTextDisplay(viewModel.recognizedText)
                         }
                     }
                 }
-            ) {
-                Icon(Icons.Default.Mic, contentDescription = null)
-            }
 
-            Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-            Text("Mode: ${if (selectedLanguage == "hi") "Hindi" else "English"}")
+                // Preview Section
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .background(Color.White, RoundedCornerShape(20.dp))
+                        .padding(4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            SignPreview(viewModel.signSequence, viewModel.currentIndex, viewModel.isPaused, gifImageLoader, viewModel.playbackSessionKey)
+                        }
+                        if (viewModel.signSequence.isNotEmpty()) {
+                            PlaybackControls(
+                                isPaused = viewModel.isPaused,
+                                isLooping = viewModel.isLooping,
+                                onTogglePlayPause = { viewModel.togglePlayPause() },
+                                onReplay = { viewModel.startPlayback(viewModel.signSequence) },
+                                onToggleLoop = { viewModel.isLooping = !viewModel.isLooping }
+                            )
+                        }
+                    }
+                }
 
-            Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-            Text("Text: $recognizedText")
-        }
-    }
+                // Bottom Controls (Mic and Restart)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Restart Button
+                    IconButton(
+                        onClick = { viewModel.reset() },
+                        modifier = Modifier
+                            .size(56.dp)
+                            .background(Color(0xFFF1F5F9), RoundedCornerShape(16.dp))
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Restart", tint = Color(0xFF64748B))
+                    }
 
-    // ---------------- ISL LOGIC ----------------
+                    Spacer(modifier = Modifier.width(24.dp))
 
-    private fun convertTextToISL(text: String): List<SignItem> {
-
-        val wordMap = mapOf(
-            "hello"   to "gifs/hello.gif",
-            "good"    to "gifs/good.gif",
-            "morning" to "gifs/morning.gif",
-            "you"     to "gifs/you.gif"
-        )
-
-        val cleanedText = text.lowercase()
-            .replace(Regex("[^a-z ]"), "")
-            .trim()
-
-        val words = cleanedText.split(" ").filter { it.isNotBlank() }
-
-        val signs = mutableListOf<SignItem>()
-
-        for (word in words) {
-            if (wordMap.containsKey(word)) {
-                signs.add(SignItem(wordMap[word]!!))
-            } else {
-                for (ch in word) {
-                    signs.add(SignItem("letters/$ch.png"))
+                    // Mic Button
+                    MicButton(
+                        isListening = viewModel.isListening,
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                ActivityCompat.requestPermissions(context as Activity, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
+                            } else {
+                                if (viewModel.isListening) {
+                                    speechRecognizer.stopListening()
+                                    viewModel.isListening = false
+                                } else {
+                                    startListening()
+                                }
+                            }
+                        },
+                        modifier = Modifier.size(72.dp),
+                        volume = viewModel.audioVolume
+                    )
+                    
+                    Spacer(modifier = Modifier.width(24.dp))
+                    
+                    // Spacer to balance the layout
+                    Box(modifier = Modifier.size(56.dp))
                 }
             }
         }
+    }
 
-        return signs
+    private fun startListening() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
+        viewModel.isListening = true
+        viewModel.recognizedText = ""
+        speechRecognizer.startListening(intent)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::speechRecognizer.isInitialized) {
+            speechRecognizer.destroy()
+        }
     }
 }

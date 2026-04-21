@@ -5,106 +5,209 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.util.Log
-import android.widget.Button
-import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.core.app.ActivityCompat
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.example.speech_sign_language_project.ui.theme.Speech_Sign_Language_ProjectTheme
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-class SignToSpeechActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
-    private lateinit var previewView: PreviewView
-    private lateinit var tvDetectedLetter: TextView
-    private lateinit var tvBuiltWord: TextView
-    private lateinit var tvConfidence: TextView
-    private lateinit var btnSpeak: Button
-    private lateinit var btnClear: Button
-
+    private val viewModel: SignToSpeechViewModel by viewModels()
     private lateinit var cameraExecutor: ExecutorService
-    private lateinit var tts: TextToSpeech
+    private var tts: TextToSpeech? = null
 
-    private val builtWord            = StringBuilder()
-    private var lastDetected         = "?"
-    private var stableCount          = 0
-    private val STABLE_FRAMES        = 40      // ~4 seconds of holding
-    private var lastAddedSign        = ""
-    private val CONFIDENCE_THRESHOLD = 0.70f   // high confidence required
-    private val mainHandler          = Handler(Looper.getMainLooper())
-
-    // Frame skip — only process every 3rd frame
+    private var stableCount = 0
+    private var lastDetected = "?"
+    private var lastAddedSign = ""
+    private val STABLE_FRAMES = 35
+    private val CONFIDENCE_THRESHOLD = 0.75f
     private var frameCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        Log.e("STARTUP", "=== SignToSpeechActivity onCreate START ===")
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_sign_to_speech)
-
-        previewView      = findViewById(R.id.cameraPreview)
-        tvDetectedLetter = findViewById(R.id.tvDetectedLetter)
-        tvBuiltWord      = findViewById(R.id.tvBuiltWord)
-        tvConfidence     = findViewById(R.id.tvConfidence)
-        btnSpeak         = findViewById(R.id.btnSpeak)
-        btnClear         = findViewById(R.id.btnClear)
-
+        
         TFLiteClassifier.init(this)
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
 
-        btnSpeak.setOnClickListener {
-            val text = builtWord.toString().trim()
-            if (text.isNotEmpty()) speakOut(text)
-            else Toast.makeText(this, "Nothing to speak yet!", Toast.LENGTH_SHORT).show()
-        }
-
-        btnClear.setOnClickListener {
-            builtWord.clear()
-            lastAddedSign = ""
-            tvBuiltWord.text = ""
-            tvConfidence.text = "Cleared!"
-        }
-
-        if (hasCameraPermission()) startCamera()
-        else ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
-    }
-
-    private fun hasCameraPermission() =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 101 &&
-            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-        ) startCamera()
-        else {
-            Toast.makeText(this, "Camera permission required", Toast.LENGTH_LONG).show()
-            finish()
+        setContent {
+            Speech_Sign_Language_ProjectTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFF1F5F9)) {
+                    SignToSpeechScreen(viewModel)
+                }
+            }
         }
     }
 
-    private fun startCamera() {
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun SignToSpeechScreen(viewModel: SignToSpeechViewModel) {
+        val context = LocalContext.current
+        val lifecycleOwner = LocalLifecycleOwner.current
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top Bar
+            CenterAlignedTopAppBar(
+                title = { Text("Sign Detection", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = { finish() }) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = Color.White
+                )
+            )
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp)) {
+                // Camera Preview
+                Card(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(24.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            PreviewView(ctx).apply {
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { previewView ->
+                            startCamera(previewView, lifecycleOwner)
+                        }
+                    )
+                }
+
+                // Detection Overlay (bottom of card)
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                        .padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Detected: ${viewModel.detectedSign}",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(if (viewModel.holdProgress >= 100) Color.Green else Color.Yellow)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = viewModel.holdProgress / 100f,
+                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                        color = Color(0xFF3B82F6),
+                        trackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                }
+            }
+
+            // Word Builder Section
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Built Word:", fontSize = 12.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = viewModel.builtWord.ifEmpty { "..." },
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF1E293B)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = { 
+                                if (viewModel.builtWord.isNotEmpty()) speakOut(viewModel.builtWord)
+                                else Toast.makeText(context, "Nothing to speak", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6))
+                        ) {
+                            Icon(Icons.Default.VolumeUp, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Speak")
+                        }
+
+                        OutlinedButton(
+                            onClick = { viewModel.clear() },
+                            modifier = Modifier.weight(0.6f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.Red),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Clear")
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+
+    private fun startCamera(previewView: PreviewView, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
-
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
@@ -121,56 +224,43 @@ class SignToSpeechActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
-                    this,
+                    lifecycleOwner,
                     CameraSelector.DEFAULT_FRONT_CAMERA,
                     preview,
                     imageAnalyzer
                 )
             } catch (e: Exception) {
-                Log.e("SignToSpeech", "Camera bind failed: ${e.message}")
+                Log.e("SignToSpeech", "Camera bind failed", e)
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
     private fun processFrame(imageProxy: ImageProxy) {
-        // Skip every 2 out of 3 frames — reduces jitter and speeds up stability
-        frameCount++
-        if (frameCount % 3 != 0) {
+        frameCount = (frameCount + 1) % 3
+        if (frameCount != 0) {
             imageProxy.close()
             return
         }
 
         try {
             val bitmap = imageProxy.toBitmap()
-
-            val argbBitmap = if (bitmap.config == Bitmap.Config.ARGB_8888) {
-                bitmap
-            } else {
-                bitmap.copy(Bitmap.Config.ARGB_8888, false)
-            }
-
+            val argbBitmap = if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            
+            // Mirror for front camera
             val matrix = Matrix().apply { preScale(-1f, 1f) }
-            val mirrored = Bitmap.createBitmap(
-                argbBitmap, 0, 0,
-                argbBitmap.width, argbBitmap.height,
-                matrix, false
-            )
+            val mirrored = Bitmap.createBitmap(argbBitmap, 0, 0, argbBitmap.width, argbBitmap.height, matrix, false)
 
             val (sign, confidence) = TFLiteClassifier.classify(mirrored)
-
-            Log.d("TFLite", "Sign=$sign Conf=${"%.2f".format(confidence)}")
-
-            updateSignState(sign, confidence)
+            updateSignLogic(sign, confidence)
 
         } catch (e: Exception) {
-            Log.e("SignToSpeech", "Frame error: ${e.message}", e)
+            Log.e("SignToSpeech", "Frame error", e)
         } finally {
             imageProxy.close()
         }
     }
 
-    private fun updateSignState(sign: String, confidence: Float) {
-        // Filter out biased/noise signs
+    private fun updateSignLogic(sign: String, confidence: Float) {
         val filteredSign = when (sign) {
             "nothing", "space", "del" -> "?"
             else -> sign
@@ -181,48 +271,39 @@ class SignToSpeechActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (validSign == lastDetected && validSign != "?") {
             stableCount++
         } else {
-            stableCount  = 0
+            stableCount = 0
             lastDetected = validSign
         }
 
         val progress = (stableCount.toFloat() / STABLE_FRAMES * 100).toInt().coerceAtMost(100)
-        val confPct  = (confidence * 100).toInt()
+        val confPct = (confidence * 100).toInt()
 
-        mainHandler.post {
-            tvDetectedLetter.text = if (validSign == "?") "?" else validSign
-
-            tvConfidence.text = when {
-                validSign == "?"             -> "No sign ($confPct%)"
-                stableCount >= STABLE_FRAMES -> "✓ Added!"
-                else                         -> "Conf: $confPct% | Hold: $progress%"
-            }
-
-            if (stableCount == STABLE_FRAMES && validSign != lastAddedSign) {
+        runOnUiThread {
+            viewModel.updateDetectedSign(validSign, confPct, progress, stableCount >= STABLE_FRAMES)
+            
+            if (stableCount == STABLE_FRAMES && validSign != lastAddedSign && validSign != "?") {
                 lastAddedSign = validSign
-                stableCount   = 0
-                builtWord.append(validSign)
-                tvBuiltWord.text = builtWord.toString()
-                Log.e("SignToSpeech", "Added '$validSign' → '${builtWord}'")
+                stableCount = 0
+                viewModel.appendLetter(validSign)
             }
         }
     }
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            tts.language = Locale.US
-            Log.d("SignToSpeech", "TTS ready")
+            tts?.language = Locale.US
         }
     }
 
     private fun speakOut(text: String) {
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "utterance")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "utterance")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
         TFLiteClassifier.close()
-        tts.stop()
-        tts.shutdown()
+        tts?.stop()
+        tts?.shutdown()
     }
 }
