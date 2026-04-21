@@ -1,4 +1,4 @@
- plugins {
+plugins {
     id("com.google.gms.google-services")
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -26,17 +26,30 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    // ✅ FIX 2: Kotlin JVM target
     kotlinOptions {
         jvmTarget = "17"
     }
     buildFeatures {
         compose = true
     }
-
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
+    }
+
+    // ── Prevents packaging conflicts with TFLite ──────────────────────────
+    packaging {
+        resources {
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/LICENSE"
+            excludes += "/META-INF/LICENSE.txt"
+            excludes += "/META-INF/NOTICE"
+            excludes += "/META-INF/NOTICE.txt"
+        }
+    }
+
+    // ── Required for TFLite model files ───────────────────────────────────
+    androidResources {
+        noCompress += "tflite"
     }
 }
 
@@ -57,11 +70,20 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("com.google.firebase:firebase-auth:22.3.0")
-    implementation("com.google.firebase:firebase-auth:22.3.0")
-    implementation("com.google.android.gms:play-services-auth:20.7.0")
     implementation("com.google.android.gms:play-services-auth:21.0.0")
     implementation("com.google.android.material:material:1.11.0")
     implementation("com.google.mlkit:language-id:17.0.4")
     implementation("com.google.mlkit:translate:17.0.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // ── CameraX ───────────────────────────────────────────────────────────
+    implementation("androidx.camera:camera-core:1.3.1")
+    implementation("androidx.camera:camera-camera2:1.3.1")
+    implementation("androidx.camera:camera-lifecycle:1.3.1")
+    implementation("androidx.camera:camera-view:1.3.1")
+
+    // ── TFLite ────────────────────────────────────────────────────────────
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
 }

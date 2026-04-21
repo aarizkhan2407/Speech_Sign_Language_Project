@@ -178,7 +178,25 @@ class MainActivity : ComponentActivity() {
 
             Text("Speech to ISL", fontSize = 26.sp, fontWeight = FontWeight.Bold)
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // ── NEW: Navigate to Sign → Speech screen ──────────────────────
+            Button(
+                onClick = {
+                    context.startActivity(Intent(context, SignToSpeechActivity::class.java))
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("📷  Sign Language → Speech", fontSize = 15.sp, color = Color.White)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Divider(color = Color(0xFFCBD5E1))
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // LANGUAGE TOGGLE
             Row {
@@ -234,7 +252,6 @@ class MainActivity : ComponentActivity() {
                                 return@startSpeechRecognition
                             }
 
-                            // 🔥 GOOGLE TRANSLATE HERE
                             translateToEnglishAPI(text) { translated ->
 
                                 val sequence = convertTextToISL(translated)
@@ -269,11 +286,10 @@ class MainActivity : ComponentActivity() {
     private fun convertTextToISL(text: String): List<SignItem> {
 
         val wordMap = mapOf(
-            "hello" to "gifs/hello.gif",
-            "good" to "gifs/good.gif",
+            "hello"   to "gifs/hello.gif",
+            "good"    to "gifs/good.gif",
             "morning" to "gifs/morning.gif",
-            "you" to "gifs/you.gif",
-            "fine" to "gifs/fine.gif"
+            "you"     to "gifs/you.gif"
         )
 
         val cleanedText = text.lowercase()
