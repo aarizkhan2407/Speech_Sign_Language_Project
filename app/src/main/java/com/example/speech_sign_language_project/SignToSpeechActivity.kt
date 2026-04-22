@@ -11,6 +11,8 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.activity.result.contract.ActivityResultContracts
+import android.util.Size as SizeCompat
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -24,20 +26,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.*
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.core.content.ContextCompat
-import com.example.speech_sign_language_project.ui.theme.Speech_Sign_Language_ProjectTheme
+import com.example.speech_sign_language_project.ui.theme.SignBuddyTheme
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -51,9 +55,28 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var stableCount = 0
     private var lastDetected = "?"
     private var lastAddedSign = ""
-    private val STABLE_FRAMES = 35
-    private val CONFIDENCE_THRESHOLD = 0.75f
+    private val STABLE_FRAMES = 30
+    private val CONFIDENCE_THRESHOLD = 0.60f
     private var frameCount = 0
+    private var hasCameraPermission = false
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            hasCameraPermission = true
+            // Re-compose to start camera
+            setContent {
+                SignBuddyTheme {
+                    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFF1F5F9)) {
+                        SignToSpeechScreen(viewModel)
+                    }
+                }
+            }
+        } else {
+            Toast.makeText(this, "Camera permission is required", Toast.LENGTH_LONG).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,8 +85,14 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
 
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            hasCameraPermission = true
+        } else {
+            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+
         setContent {
-            Speech_Sign_Language_ProjectTheme {
+            SignBuddyTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFF1F5F9)) {
                     SignToSpeechScreen(viewModel)
                 }
@@ -88,64 +117,91 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = Color.White
-                )
+                ),
+                actions = {
+                    IconButton(onClick = { viewModel.toggleCamera() }) {
+                        Icon(Icons.Default.FlipCameraAndroid, contentDescription = "Switch Camera")
+                    }
+                }
             )
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp)) {
                 // Camera Preview
+                val previewView = remember {
+                    PreviewView(context).apply {
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
+                }
+
+                LaunchedEffect(viewModel.lensFacing, hasCameraPermission) {
+                    if (hasCameraPermission) {
+                        startCamera(previewView, lifecycleOwner, viewModel.cameraSelector)
+                    }
+                }
+
                 Card(
                     modifier = Modifier.fillMaxSize(),
                     shape = RoundedCornerShape(24.dp),
                     elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                 ) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PreviewView(ctx).apply {
-                                scaleType = PreviewView.ScaleType.FILL_CENTER
-                                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                        update = { previewView ->
-                            startCamera(previewView, lifecycleOwner)
-                        }
-                    )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        AndroidView(
+                            factory = { previewView },
+                            modifier = Modifier.fillMaxSize()
+                        )
+
+                        // Visual Guide Frame (Hand Focus Square)
+                        Box(
+                            modifier = Modifier
+                                .size(280.dp)
+                                .align(Alignment.Center)
+                                .background(Color.Transparent)
+                                .drawWithContent {
+                                    drawContent()
+                                    val strokeWidth = 4.dp.toPx()
+                                    val cornerLen = 40.dp.toPx()
+                                    val color = if (viewModel.holdProgress >= 100) Color.Green else Color.White.copy(alpha = 0.5f)
+                                    
+                                    // Top Left
+                                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(cornerLen, 0f), strokeWidth)
+                                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(0f, cornerLen), strokeWidth)
+                                    
+                                    // Top Right
+                                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(size.width - cornerLen, 0f), strokeWidth)
+                                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(size.width, cornerLen), strokeWidth)
+                                    
+                                    // Bottom Left
+                                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height), androidx.compose.ui.geometry.Offset(cornerLen, size.height), strokeWidth)
+                                    drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height), androidx.compose.ui.geometry.Offset(0f, size.height - cornerLen), strokeWidth)
+                                    
+                                    // Bottom Right
+                                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, size.height), androidx.compose.ui.geometry.Offset(size.width - cornerLen, size.height), strokeWidth)
+                                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width, size.height), androidx.compose.ui.geometry.Offset(size.width, size.height - cornerLen), strokeWidth)
+                                }
+                        )
+
+                        Text(
+                            "Put hand inside frame",
+                            modifier = Modifier.align(Alignment.Center).padding(top = 320.dp),
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 12.sp
+                        )
+                    }
                 }
 
                 // Detection Overlay (bottom of card)
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
-                        .padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                DetectionOverlay(viewModel)
+
+                if (!hasCameraPermission) {
+                    Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.8f))) {
                         Text(
-                            text = "Detected: ${viewModel.detectedSign}",
+                            "Camera permission required",
+                            modifier = Modifier.align(Alignment.Center),
                             color = Color.White,
-                            fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(androidx.compose.foundation.shape.CircleShape)
-                                .background(if (viewModel.holdProgress >= 100) Color.Green else Color.Yellow)
-                        )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = viewModel.holdProgress / 100f,
-                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                        color = Color(0xFF3B82F6),
-                        trackColor = Color.White.copy(alpha = 0.3f)
-                    )
                 }
             }
 
@@ -204,7 +260,47 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun startCamera(previewView: PreviewView, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
+    @Composable
+    private fun BoxScope.DetectionOverlay(viewModel: SignToSpeechViewModel) {
+        val animatedProgress by animateFloatAsState(targetValue = viewModel.holdProgress / 100f)
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(16.dp)
+                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
+                .padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Detected: ${viewModel.detectedSign}",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(if (viewModel.holdProgress >= 100) Color.Green else Color.Yellow)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = animatedProgress,
+                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                color = if (viewModel.holdProgress >= 100) Color.Green else Color(0xFF3B82F6),
+                trackColor = Color.White.copy(alpha = 0.2f)
+            )
+        }
+    }
+
+    private fun startCamera(previewView: PreviewView, lifecycleOwner: androidx.lifecycle.LifecycleOwner, cameraSelector: CameraSelector) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
@@ -214,6 +310,7 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
             val imageAnalyzer = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .setTargetResolution(SizeCompat(720, 1280))
                 .build()
                 .also {
                     it.setAnalyzer(cameraExecutor) { imageProxy ->
@@ -225,7 +322,7 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
                     lifecycleOwner,
-                    CameraSelector.DEFAULT_FRONT_CAMERA,
+                    cameraSelector,
                     preview,
                     imageAnalyzer
                 )
@@ -246,11 +343,19 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val bitmap = imageProxy.toBitmap()
             val argbBitmap = if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, false)
             
-            // Mirror for front camera
-            val matrix = Matrix().apply { preScale(-1f, 1f) }
-            val mirrored = Bitmap.createBitmap(argbBitmap, 0, 0, argbBitmap.width, argbBitmap.height, matrix, false)
+            // Mirror only for front camera
+            val matrix = Matrix().apply { 
+                if (viewModel.lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                    preScale(-1f, 1f) 
+                }
+            }
+            val processedBitmap = if (viewModel.lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                Bitmap.createBitmap(argbBitmap, 0, 0, argbBitmap.width, argbBitmap.height, matrix, false)
+            } else {
+                argbBitmap
+            }
 
-            val (sign, confidence) = TFLiteClassifier.classify(mirrored)
+            val (sign, confidence) = TFLiteClassifier.classify(processedBitmap)
             updateSignLogic(sign, confidence)
 
         } catch (e: Exception) {
@@ -262,7 +367,7 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun updateSignLogic(sign: String, confidence: Float) {
         val filteredSign = when (sign) {
-            "nothing", "space", "del" -> "?"
+            "nothing" -> "?"
             else -> sign
         }
 

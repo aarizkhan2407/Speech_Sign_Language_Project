@@ -1,4 +1,4 @@
-# Signs & Speech: Real-time Communication Bridge
+# Sign Buddy: Real-time Communication Bridge
 
 A modern Android application designed to bridge the communication gap between speech and sign language. This app leverages advanced Speech Recognition and a custom Sign Language translation engine to provide real-time, visual communication for users.
 
@@ -70,7 +70,7 @@ You can build the project using the Gradle wrapper:
 
 ## 📝 Usage
 
-1. **Launch the App**: Open "Signs & Speech" on your device.
+1. **Launch the App**: Open "Sign Buddy" on your device.
 2. **Authentication**: Sign up for a new account or log in with existing credentials.
 3. **Listen**: Press the large Blue Microphone button. The visualizer will show high-frequency activity as you speak.
 4. **Visual Translate**: Recognized words will appear on screen, and if a corresponding sign exists in the library, it will be displayed automatically.

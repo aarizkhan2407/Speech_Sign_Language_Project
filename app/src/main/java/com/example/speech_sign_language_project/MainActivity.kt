@@ -9,6 +9,8 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -34,7 +36,7 @@ import androidx.core.content.ContextCompat
 import coil.ImageLoader
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
-import com.example.speech_sign_language_project.ui.theme.Speech_Sign_Language_ProjectTheme
+import com.example.speech_sign_language_project.ui.theme.SignBuddyTheme
 import com.google.firebase.auth.FirebaseAuth
 import java.util.UUID
 
@@ -63,24 +65,33 @@ class MainActivity : ComponentActivity() {
                 // We keep isListening true until onResults or manual cancel
             }
             override fun onError(error: Int) {
-                viewModel.isListening = false
                 viewModel.audioVolume = 0f
-                viewModel.listeningStatus = when (error) {
-                    SpeechRecognizer.ERROR_NETWORK -> "Network Error"
-                    SpeechRecognizer.ERROR_NO_MATCH -> "No match found"
-                    else -> "Restarting..."
+                if (viewModel.isListening) {
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (viewModel.isListening) startListening(isRestart = true)
+                    }, 500)
+                } else {
+                    viewModel.listeningStatus = ""
                 }
-                // Auto-restart if we want persistent listening, 
-                // but for now let's just allow manual retry
             }
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (!matches.isNullOrEmpty()) {
                     val text = matches[0]
-                    viewModel.listeningStatus = ""
-                    viewModel.isListening = false
                     viewModel.audioVolume = 0f
-                    viewModel.translateAndPlay(this@MainActivity, text)
+                    // Append with space if not empty
+                    viewModel.accumulatedText += (if (viewModel.accumulatedText.isNotEmpty()) " " else "") + text
+                    viewModel.recognizedText = viewModel.accumulatedText
+                    
+                    if (viewModel.isListening) {
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            if (viewModel.isListening) startListening(isRestart = true)
+                        }, 500)
+                    }
+                } else if (viewModel.isListening) {
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (viewModel.isListening) startListening(isRestart = true)
+                    }, 500)
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {
@@ -103,7 +114,7 @@ class MainActivity : ComponentActivity() {
             .build()
 
         setContent {
-            Speech_Sign_Language_ProjectTheme {
+            SignBuddyTheme {
                 PhoneScreen(viewModel, gifImageLoader)
             }
         }
@@ -132,21 +143,19 @@ class MainActivity : ComponentActivity() {
                         Icon(Icons.Default.Info, contentDescription = "Info", tint = Color(0xFF64748B))
                     }
                     Text(
-                        "ISL Translator",
+                        "Sign Buddy",
                         fontSize = if (constraints.maxWidth < 600.dp) 24.sp else 30.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color(0xFF0F172A)
                     )
                     IconButton(onClick = { 
-                        /* Auth logic commented out as requested */
+                        context.startActivity(Intent(context, SignToSpeechActivity::class.java))
                     }) {
-                        Icon(Icons.Default.ExitToApp, contentDescription = "Logout", tint = Color(0xFF64748B))
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Sign Detection", tint = Color(0xFF64748B))
                     }
                 }
 
-                // Switch Mode Button
-                ModeButton(context)
-                Spacer(modifier = Modifier.height(16.dp))
+
 
                 // Input Section (Spoken text or manual entry)
                 Card(
@@ -246,8 +255,9 @@ class MainActivity : ComponentActivity() {
                                 if (viewModel.isListening) {
                                     speechRecognizer.stopListening()
                                     viewModel.isListening = false
+                                    viewModel.translateAndPlay(context, viewModel.accumulatedText)
                                 } else {
-                                    startListening()
+                                    startListening(isRestart = false)
                                 }
                             }
                         },
@@ -264,13 +274,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startListening() {
+    private fun startListening(isRestart: Boolean = false) {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
         viewModel.isListening = true
-        viewModel.recognizedText = ""
+        if (!isRestart) {
+            viewModel.accumulatedText = ""
+            viewModel.recognizedText = ""
+        }
         speechRecognizer.startListening(intent)
     }
 

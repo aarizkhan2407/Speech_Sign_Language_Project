@@ -1,10 +1,23 @@
 package com.example.speech_sign_language_project
 
+import androidx.camera.core.CameraSelector
 import androidx.compose.runtime.*
 import androidx.lifecycle.ViewModel
 import java.lang.StringBuilder
 
 class SignToSpeechViewModel : ViewModel() {
+    var lensFacing by mutableStateOf(CameraSelector.LENS_FACING_FRONT)
+    val cameraSelector: CameraSelector
+        get() = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+
+    fun toggleCamera() {
+        lensFacing = if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+            CameraSelector.LENS_FACING_BACK
+        } else {
+            CameraSelector.LENS_FACING_FRONT
+        }
+    }
+
     var detectedSign by mutableStateOf("?")
     var confidence by mutableStateOf(0)
     var builtWord by mutableStateOf("")
@@ -21,7 +34,12 @@ class SignToSpeechViewModel : ViewModel() {
     }
 
     fun appendLetter(letter: String) {
-        wordBuilder.append(letter)
+        when (letter.lowercase()) {
+            "space" -> wordBuilder.append(" ")
+            "del" -> if (wordBuilder.isNotEmpty()) wordBuilder.deleteCharAt(wordBuilder.length - 1)
+            "nothing" -> { /* do nothing */ }
+            else -> wordBuilder.append(letter)
+        }
         builtWord = wordBuilder.toString()
     }
 

@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Speech_Sign_Language_Project"
+rootProject.name = "Sign Buddy"
 include(":app")

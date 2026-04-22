@@ -13,6 +13,7 @@ import org.json.JSONObject
 class MainViewModel : ViewModel() {
 
     var recognizedText by mutableStateOf("")
+    var accumulatedText by mutableStateOf("")
     var signSequence by mutableStateOf<List<SignItem>>(emptyList())
     var currentIndex by mutableStateOf(0)
     var playbackSessionKey by mutableStateOf(0)
@@ -118,6 +119,7 @@ class MainViewModel : ViewModel() {
 
     fun reset() {
         recognizedText = ""
+        accumulatedText = ""
         signSequence = emptyList()
         isPaused = false
         isLooping = false
