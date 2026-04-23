@@ -55,8 +55,8 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var stableCount = 0
     private var lastDetected = "?"
     private var lastAddedSign = ""
-    private var STABLE_FRAMES = 15
-    private val CONFIDENCE_THRESHOLD = 0.60f
+    private var STABLE_FRAMES = 5 // Reduced from 15 for faster detection
+    private val CONFIDENCE_THRESHOLD = 0.50f // Slightly lowered to catch close matches
     private var frameCount = 0
     private var hasCameraPermission = false
 
@@ -333,7 +333,7 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun processFrame(imageProxy: ImageProxy) {
-        frameCount = (frameCount + 1) % 3
+        frameCount = (frameCount + 1) % 2 // Faster processing
         if (frameCount != 0) {
             imageProxy.close()
             return

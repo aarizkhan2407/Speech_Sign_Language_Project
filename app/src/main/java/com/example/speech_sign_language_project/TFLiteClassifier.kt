@@ -31,7 +31,7 @@ object TFLiteClassifier {
             val baseOptionsBuilder = BaseOptions.builder().setModelAssetPath("hand_landmarker.task")
             val optionsBuilder = HandLandmarker.HandLandmarkerOptions.builder()
                 .setBaseOptions(baseOptionsBuilder.build())
-                .setNumHands(1)
+                .setNumHands(2)
                 .setRunningMode(RunningMode.IMAGE)
 
             handLandmarker = HandLandmarker.createFromOptions(context, optionsBuilder.build())
@@ -79,44 +79,61 @@ object TFLiteClassifier {
                 return Pair("Nothing", 0.0f)
             }
 
-            // MediaPipe detection result
-            val landmarks = result.landmarks()[0]
-            
-            // Basic landmark processing without handedness check for now to fix build
-            // Dataset structure: [L_x1, L_y1... (42 total), R_x1, R_y1... (42 total)]
-            // Defaulting to "Right hand" slot (offset 42) for single-hand detection
-            val isLeft = false 
-
-
             inputBuffer.rewind()
-            val features = FloatArray(84) { 0f }
             
-            // Dataset structure: [L_x1, L_y1... (42 total), R_x1, R_y1... (42 total)]
-            val offset = if (isLeft) 0 else 42
+            // Perspective 1: Direct Mapping
+            val directFeatures = FloatArray(84) { 0f }
+            val firstHand = result.landmarks()[0]
+            val firstHandedness = result.handednesses()[0][0].categoryName()
+            val directOffset = if (firstHandedness == "Left") 0 else 42
+            
             for (i in 0 until 21) {
-                if (i < landmarks.size) {
-                    val lm = landmarks[i]
-                    features[offset + (i * 2)] = lm.x()
-                    features[offset + (i * 2) + 1] = lm.y()
-                }
+                directFeatures[directOffset + (i * 2)] = firstHand[i].x()
+                directFeatures[directOffset + (i * 2) + 1] = firstHand[i].y()
             }
-
-            for (f in features) {
-                inputBuffer.putFloat(f)
+            
+            val directResult = runInference(directFeatures)
+            
+            // Perspective 2: Mirrored Mapping (x = 1-x) and Swapped Slot
+            val mirrorFeatures = FloatArray(84) { 0f }
+            val mirrorOffset = if (firstHandedness == "Left") 42 else 0 // Swap slot
+            
+            for (i in 0 until 21) {
+                mirrorFeatures[mirrorOffset + (i * 2)] = 1.0f - firstHand[i].x() // Mirror x
+                mirrorFeatures[mirrorOffset + (i * 2) + 1] = firstHand[i].y()
             }
-
-            interp.run(inputBuffer, outputBuffer)
-
-            val scores = outputBuffer[0]
-            val maxIdx = scores.indices.maxByOrNull { scores[it] } ?: -1
-            val confidence = if (maxIdx != -1) scores[maxIdx] else 0f
-            val label = labels[maxIdx] ?: "?"
-
-            Pair(label, confidence)
+            
+            val mirrorResult = runInference(mirrorFeatures)
+            
+            // Choose the best one
+            val finalResult = if (directResult.second >= mirrorResult.second) directResult else mirrorResult
+            
+            Log.d("TFLite", "Perspectives - Direct: ${directResult.first}(${directResult.second}), Mirror: ${mirrorResult.first}(${mirrorResult.second})")
+            Log.d("TFLite", "Final Selection: ${finalResult.first} (Hand: $firstHandedness)")
+            
+            finalResult
         } catch (e: Exception) {
             Log.e("TFLite", "Classify error", e)
             Pair("?", 0f)
         }
+    }
+
+    private fun runInference(features: FloatArray): Pair<String, Float> {
+        val interp = interpreter ?: return Pair("?", 0f)
+        inputBuffer.rewind()
+        for (f in features) {
+            inputBuffer.putFloat(f)
+        }
+        
+        val localOutput = Array(1) { FloatArray(labels.size) }
+        interp.run(inputBuffer, localOutput)
+        
+        val scores = localOutput[0]
+        val maxIdx = scores.indices.maxByOrNull { scores[it] } ?: -1
+        val confidence = if (maxIdx != -1) scores[maxIdx] else 0f
+        val label = labels[maxIdx] ?: "?"
+        
+        return Pair(label, confidence)
     }
 
     fun close() {
