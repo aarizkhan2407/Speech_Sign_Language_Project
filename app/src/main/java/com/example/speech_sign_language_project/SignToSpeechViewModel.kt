@@ -36,8 +36,10 @@ class SignToSpeechViewModel : ViewModel() {
     fun appendLetter(letter: String) {
         when (letter.lowercase()) {
             "space" -> wordBuilder.append(" ")
+            "delete" -> if (wordBuilder.isNotEmpty()) wordBuilder.deleteCharAt(wordBuilder.length - 1)
             "del" -> if (wordBuilder.isNotEmpty()) wordBuilder.deleteCharAt(wordBuilder.length - 1)
             "nothing" -> { /* do nothing */ }
+            "?" -> { /* do nothing */ }
             else -> wordBuilder.append(letter)
         }
         builtWord = wordBuilder.toString()

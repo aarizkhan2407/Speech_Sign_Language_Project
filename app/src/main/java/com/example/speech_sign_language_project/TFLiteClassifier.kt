@@ -3,6 +3,11 @@ package com.example.speech_sign_language_project
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import org.json.JSONObject
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
@@ -13,135 +18,111 @@ import java.nio.channels.FileChannel
 object TFLiteClassifier {
 
     private var interpreter: Interpreter? = null
+    private var handLandmarker: HandLandmarker? = null
     private var labels: Map<Int, String> = emptyMap()
-    private var imgSize: Int = 96
+    private lateinit var inputBuffer: ByteBuffer
+    private lateinit var outputBuffer: Array<FloatArray>
 
     fun init(context: Context) {
         if (interpreter != null) return
-        Log.e("TFLite", "=== INIT CALLED ===")
+        Log.e("TFLite", "=== GESTURE MODEL INIT ===")
         try {
-            Log.e("TFLite", "Step 1: listing assets...")
-            val list = context.assets.list("") ?: emptyArray()
-            Log.e("TFLite", "Step 1 OK - assets: ${list.toList()}")
+            // 1. MediaPipe Hand Landmarker
+            val baseOptionsBuilder = BaseOptions.builder().setModelAssetPath("hand_landmarker.task")
+            val optionsBuilder = HandLandmarker.HandLandmarkerOptions.builder()
+                .setBaseOptions(baseOptionsBuilder.build())
+                .setNumHands(1)
+                .setRunningMode(RunningMode.IMAGE)
 
-            Log.e("TFLite", "Step 2: checking model file exists...")
-            if ("asl_model.tflite" !in list) {
-                Log.e("TFLite", "FATAL: asl_model.tflite NOT in assets!")
-                return
-            }
-            Log.e("TFLite", "Step 2 OK - model file found")
+            handLandmarker = HandLandmarker.createFromOptions(context, optionsBuilder.build())
 
-            Log.e("TFLite", "Step 3: opening model file descriptor...")
-            val fd = context.assets.openFd("asl_model.tflite")
-            Log.e("TFLite", "Step 3 OK - fd length=${fd.length} declared=${fd.declaredLength}")
-
-            Log.e("TFLite", "Step 4: mapping model to buffer...")
+            // 2. Gesture Model TFLite
+            val fd = context.assets.openFd("gesture_model.tflite")
             val inputStream = FileInputStream(fd.fileDescriptor)
             val modelBuffer = inputStream.channel.map(
                 FileChannel.MapMode.READ_ONLY,
                 fd.startOffset,
                 fd.declaredLength
             )
-            Log.e("TFLite", "Step 4 OK - buffer capacity=${modelBuffer.capacity()}")
+            interpreter = Interpreter(modelBuffer, Interpreter.Options().setNumThreads(2))
 
-            Log.e("TFLite", "Step 5: creating Interpreter...")
-            val options = Interpreter.Options().apply {
-                setNumThreads(2)
-            }
-            interpreter = Interpreter(modelBuffer, options)
-            Log.e("TFLite", "Step 5 OK - interpreter created")
-
-            Log.e("TFLite", "Step 6: reading tensor shapes...")
-            val inputShape = interpreter!!.getInputTensor(0).shape()
-            val outputShape = interpreter!!.getOutputTensor(0).shape()
-            imgSize = inputShape[1]
-            Log.e("TFLite", "Step 6 OK - input=${inputShape.toList()} output=${outputShape.toList()} imgSize=$imgSize")
-
-            Log.e("TFLite", "Step 7: loading labels...")
-            val labelsJson = context.assets.open("asl_labels.json").bufferedReader().readText()
-            Log.e("TFLite", "Step 7 OK - json length=${labelsJson.length}")
-
-            Log.e("TFLite", "Step 8: parsing labels...")
+            // 3. Labels
+            val labelsJson = context.assets.open("gesture_labels.json").bufferedReader().readText()
             val jsonObj = JSONObject(labelsJson)
-            labels = jsonObj.keys().asSequence()
-                .associate { it.toInt() to jsonObj.getString(it) }
-            Log.e("TFLite", "Step 8 OK - ${labels.size} labels loaded")
+            val labelMap = mutableMapOf<Int, String>()
+            jsonObj.keys().forEach { key ->
+                labelMap[key.toInt()] = jsonObj.getString(key)
+            }
+            labels = labelMap
 
-            Log.e("TFLite", "=== INIT COMPLETE SUCCESSFULLY ===")
+            // 4. Buffers
+            inputBuffer = ByteBuffer.allocateDirect(4 * 84).apply {
+                order(ByteOrder.nativeOrder())
+            }
+            outputBuffer = Array(1) { FloatArray(labels.size) }
 
+            Log.e("TFLite", "INIT SUCCESS")
         } catch (e: Exception) {
-            Log.e("TFLite", "=== INIT EXCEPTION ===")
-            Log.e("TFLite", "Type: ${e.javaClass.name}")
-            Log.e("TFLite", "Message: ${e.message}")
-            Log.e("TFLite", "Stack:", e)
+            Log.e("TFLite", "INIT ERROR", e)
         }
     }
 
     fun classify(bitmap: Bitmap): Pair<String, Float> {
-        val interp = interpreter ?: run {
-            Log.e("TFLite", "classify() - interpreter is null!")
-            return Pair("?", 0f)
-        }
-
-        if (labels.isEmpty()) {
-            Log.e("TFLite", "classify() - labels is empty!")
-            return Pair("?", 0f)
-        }
+        val interp = interpreter ?: return Pair("?", 0f)
+        val landmarker = handLandmarker ?: return Pair("?", 0f)
 
         return try {
-            // ── Step 1: Crop center square ────────────────────────────────
-            // Training data was square images — crop center before resizing
-            // to avoid squishing rectangular camera frames
-            val size = minOf(bitmap.width, bitmap.height)
-            val xOffset = (bitmap.width - size) / 2
-            val yOffset = (bitmap.height - size) / 2
-            val cropped = Bitmap.createBitmap(bitmap, xOffset, yOffset, size, size)
+            val mpImage = BitmapImageBuilder(bitmap).build()
+            val result: HandLandmarkerResult = landmarker.detect(mpImage)
 
-            // ── Step 2: Resize to model input size ────────────────────────
-            val resized = Bitmap.createScaledBitmap(cropped, imgSize, imgSize, true)
-
-            // ── Step 3: Convert to float ByteBuffer (RGB normalized 0-1) ──
-            val byteBuffer = ByteBuffer
-                .allocateDirect(4 * imgSize * imgSize * 3)
-                .apply { order(ByteOrder.nativeOrder()) }
-
-            val pixels = IntArray(imgSize * imgSize)
-            resized.getPixels(pixels, 0, imgSize, 0, 0, imgSize, imgSize)
-            for (pixel in pixels) {
-                byteBuffer.putFloat(((pixel shr 16) and 0xFF) / 255f) // R
-                byteBuffer.putFloat(((pixel shr 8)  and 0xFF) / 255f) // G
-                byteBuffer.putFloat((pixel           and 0xFF) / 255f) // B
+            if (result.landmarks().isEmpty()) {
+                return Pair("Nothing", 0.0f)
             }
 
-            // ── Step 4: Run inference ─────────────────────────────────────
-            val outputSize = interp.getOutputTensor(0).shape()[1]
-            val output = Array(1) { FloatArray(outputSize) }
-            interp.run(byteBuffer, output)
+            // MediaPipe detection result
+            val landmarks = result.landmarks()[0]
+            
+            // Basic landmark processing without handedness check for now to fix build
+            // Dataset structure: [L_x1, L_y1... (42 total), R_x1, R_y1... (42 total)]
+            // Defaulting to "Right hand" slot (offset 42) for single-hand detection
+            val isLeft = false 
 
-            // ── Step 5: Get top result ────────────────────────────────────
-            val scores = output[0]
-            val maxIdx = scores.indices.maxByOrNull { scores[it] } ?: return Pair("?", 0f)
-            val confidence = scores[maxIdx]
-            val label = labels[maxIdx] ?: "idx_$maxIdx"
 
-            Log.d("TFLite", "Result: $label (${"%.0f".format(confidence * 100)}%) " +
-                    "| Top3: ${
-                        scores.mapIndexed { i, s -> Pair(labels[i] ?: "$i", s) }
-                            .sortedByDescending { it.second }
-                            .take(3)
-                            .map { "${it.first}=${"%.0f".format(it.second * 100)}%" }
-                    }")
+            inputBuffer.rewind()
+            val features = FloatArray(84) { 0f }
+            
+            // Dataset structure: [L_x1, L_y1... (42 total), R_x1, R_y1... (42 total)]
+            val offset = if (isLeft) 0 else 42
+            for (i in 0 until 21) {
+                if (i < landmarks.size) {
+                    val lm = landmarks[i]
+                    features[offset + (i * 2)] = lm.x()
+                    features[offset + (i * 2) + 1] = lm.y()
+                }
+            }
+
+            for (f in features) {
+                inputBuffer.putFloat(f)
+            }
+
+            interp.run(inputBuffer, outputBuffer)
+
+            val scores = outputBuffer[0]
+            val maxIdx = scores.indices.maxByOrNull { scores[it] } ?: -1
+            val confidence = if (maxIdx != -1) scores[maxIdx] else 0f
+            val label = labels[maxIdx] ?: "?"
 
             Pair(label, confidence)
-
         } catch (e: Exception) {
-            Log.e("TFLite", "classify() error: ${e.message}", e)
+            Log.e("TFLite", "Classify error", e)
             Pair("?", 0f)
         }
     }
 
     fun close() {
         interpreter?.close()
+        handLandmarker?.close()
         interpreter = null
+        handLandmarker = null
     }
 }

@@ -55,7 +55,7 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var stableCount = 0
     private var lastDetected = "?"
     private var lastAddedSign = ""
-    private val STABLE_FRAMES = 30
+    private var STABLE_FRAMES = 15
     private val CONFIDENCE_THRESHOLD = 0.60f
     private var frameCount = 0
     private var hasCameraPermission = false
@@ -341,22 +341,25 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
         try {
             val bitmap = imageProxy.toBitmap()
-            val argbBitmap = if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            val rotationDegrees = imageProxy.imageInfo.rotationDegrees
             
-            // Mirror only for front camera
             val matrix = Matrix().apply { 
+                postRotate(rotationDegrees.toFloat())
                 if (viewModel.lensFacing == CameraSelector.LENS_FACING_FRONT) {
-                    preScale(-1f, 1f) 
+                    postScale(-1f, 1f) 
                 }
             }
-            val processedBitmap = if (viewModel.lensFacing == CameraSelector.LENS_FACING_FRONT) {
-                Bitmap.createBitmap(argbBitmap, 0, 0, argbBitmap.width, argbBitmap.height, matrix, false)
-            } else {
-                argbBitmap
-            }
+            
+            val processedBitmap = Bitmap.createBitmap(
+                bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+            )
 
             val (sign, confidence) = TFLiteClassifier.classify(processedBitmap)
             updateSignLogic(sign, confidence)
+            
+            // Clean up
+            if (processedBitmap != bitmap) processedBitmap.recycle()
+            bitmap.recycle()
 
         } catch (e: Exception) {
             Log.e("SignToSpeech", "Frame error", e)
@@ -366,7 +369,7 @@ class SignToSpeechActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun updateSignLogic(sign: String, confidence: Float) {
-        val filteredSign = when (sign) {
+        val filteredSign = when (sign.lowercase()) {
             "nothing" -> "?"
             else -> sign
         }
